@@ -74,6 +74,41 @@ function Remove-Reference{
     }
 }
 
+function Change-Reference{
+    param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$path,
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$dllRef, 
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$refName)
+
+    $XPath = [string]::Format("//a:Reference[@Include='{0}']", $refName)   
+
+    #[System.Console]::WriteLine("XPATH IS {0}", $XPath)    
+    try{
+    
+        $proj = [xml](Get-Content $path)
+        #[System.Console]::WriteLine("Loaded project {0} into {1}", $path, $proj)
+        $nsmgr = New-Object System.Xml.XmlNamespaceManager($proj.NameTable)
+        $nsmgr.AddNamespace('a','http://schemas.microsoft.com/developer/msbuild/2003')
+        $node = $proj.SelectSingleNode($XPath, $nsmgr)
+
+        if ($node -and $node.HasChildNodes)
+        { 
+            $hintNode = $node.SelectSingleNode("a:HintPath",$nsmgr)
+            if ($hintNode){
+                $hintNode.InnerText = $dllRef
+            }else{
+                Write-Error "Didn't find a hint child element"
+            }
+            $proj.Save($path)
+        }else{
+            Write-Error "Did not find a matching reference"
+        }
+        
+    }
+    catch{
+        "An error has occured that could not be resolved"
+    }
+}
+
 function Get-References{
     param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path)
 
