@@ -1,0 +1,2 @@
+copy VisualStudioProjectModifiers.psm1 ~\Documents\WindowsPowerShell\Modules\VisualStudioProjectModifiers
+copy VisualStudioModifier.psd1 ~\Documents\WindowsPowerShell\Modules\VisualStudioProjectModifiers
