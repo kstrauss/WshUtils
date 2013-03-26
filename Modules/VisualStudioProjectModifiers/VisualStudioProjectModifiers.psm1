@@ -105,17 +105,17 @@ function Change-Reference{
         
     }
     catch{
-        "An error has occured that could not be resolved"
+        "An error has occured that could not be resolved: "+ $_
     }
 }
 
 function Get-References{
     param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path)
 
-    $proj = [xml](Get-Content $path)
-    [System.Xml.XmlNamespaceManager] $nsmgr = $proj.NameTable
-    $nsmgr.AddNamespace('a','http://schemas.microsoft.com/developer/msbuild/2003')
-    $node = $proj.SelectNodes("//a:Reference", $nsmgr)
+    $proj = GetBuildXML($path)
+    $nsmgr = GetMSBuildNamespace($path)
+    $NSQualifier = MSBuildNSQual
+    $node = $proj.SelectNodes([String]::Format("//{0}:Reference", $NSQualifier), $nsmgr)
     
     $ourResult = New-Object PSObject
     $ourResult | Add-Member -type NoteProperty -Value $path -Name ProjectFile 
@@ -127,3 +127,71 @@ function Get-References{
                 }))
     return $ourResult
 }
+
+
+
+function Get-PostBuildEvent{
+    param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path)
+
+    $proj = GetBuildXML($path)
+    $nsmgr = GetMSBuildNamespace($proj)
+    $NSQualifier = MSBuildNSQual
+    $xpath = [String]::Format("//{0}:PostBuildEvent", $NSQualifier)
+    $node = $proj.SelectNodes($xpath, $nsmgr)
+    if ($node.Count -gt 0){
+    $node | %{
+        $ourResult = New-Object psobject
+        $ourResult | Add-Member -type NoteProperty -Value $path -Name ProjectFile
+        $ourResult | Add-Member -type NoteProperty -Value $_.InnerXml -Name EventText
+        $ourResult
+        }
+    }
+}
+
+function Set-PostBuildEvent{
+    param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path,
+    [Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$postBuildText)
+
+    $proj = GetBuildXML($path)
+    $nsmgr = GetMSBuildNamespace($proj)
+    $NSQualifier = MSBuildNSQual
+    $xpath = [String]::Format("//{0}:PostBuildEvent", $NSQualifier)
+    $node = $proj.SelectNodes($xpath, $nsmgr)
+
+    if ($node.Count -eq 1){
+        $newNode = $proj.CreateElement("PostBuildEvent","http://schemas.microsoft.com/developer/msbuild/2003")
+        # escape things so the xml will always be good
+        $newNode.InnerXml =[System.Security.SecurityElement]::Escape($postBuildText)
+        $parent = $node.ParentNode
+        $parent.AppendChild($newNode)
+        $parent.RemoveChild($node[0])
+
+        $proj.Save($path)
+    }
+    else{
+        Write-Error "Did not match a single node to replace. Matched $node.Count nodes"
+    }
+
+}
+
+
+# private Functions (i.e. not exported)
+function GetBuildXML{
+    param([Parameter(Mandatory=$true)][string]$path)
+    return $proj = [xml](Get-Content $path)
+}
+
+function MSBuildNSQual{
+    return 'a'
+}
+
+function GetMSBuildNamespace{
+    param([Parameter(Mandatory=$true)][System.Xml.XmlDocument]$proj)
+
+    [System.Xml.XmlNamespaceManager] $nsmgr = $proj.NameTable
+    $NSQualifier = MSBuildNSQual
+    $nsmgr.AddNamespace($NSQualifier,'http://schemas.microsoft.com/developer/msbuild/2003')
+    #without the comma PS will flatten to object[]
+    return ,$nsmgr
+}
+
