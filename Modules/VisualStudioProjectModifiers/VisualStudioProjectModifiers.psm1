@@ -158,20 +158,43 @@ function Set-PostBuildEvent{
     $xpath = [String]::Format("//{0}:PostBuildEvent", $NSQualifier)
     $node = $proj.SelectNodes($xpath, $nsmgr)
 
-    if ($node.Count -eq 1){
+    
+
+    if ($node.Count -le 1){
         $newNode = $proj.CreateElement("PostBuildEvent","http://schemas.microsoft.com/developer/msbuild/2003")
         # escape things so the xml will always be good
         $newNode.InnerXml =[System.Security.SecurityElement]::Escape($postBuildText)
-        $parent = $node.ParentNode
-        $parent.AppendChild($newNode)
-        $parent.RemoveChild($node[0])
+        if ($node.Count -eq 0){
+            $PropGroupNode = $proj.CreateElement("PropertyGroup","http://schemas.microsoft.com/developer/msbuild/2003")
+            $PropGroupNode.AppendChild($newNode)
+            $proj.DocumentElement.AppendChild($PropGroupNode)
+        }
+        else{
+            $parent = $node.ParentNode
+            $parent.AppendChild($newNode)
+
+            $parent.RemoveChild($node[0])
+        }
 
         $proj.Save($path)
     }
     else{
         Write-Error "Did not match a single node to replace. Matched $node.Count nodes"
     }
+}
 
+# Start of thought to change NoneElements see: http://msdn.microsoft.com/en-us/library/bb629388.aspx
+# so that we could modify them to copyToOutputDirectory
+function Get-NoneElements{
+    param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path,
+    [Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$postBuildText)
+
+    $proj = GetBuildXML($path)
+    $nsmgr = GetMSBuildNamespace($proj)
+
+    $NSQualifier = MSBuildNSQual
+    $xpath = [String]::Format("/{0}:ItemGroup/{0}:None", $NSQualifier)
+    $node = $proj.SelectNodes($xpath, $nsmgr)
 }
 
 
