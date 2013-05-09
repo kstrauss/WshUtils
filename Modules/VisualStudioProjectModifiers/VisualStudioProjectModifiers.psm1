@@ -113,7 +113,7 @@ function Get-References{
     param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path)
 
     $proj = GetBuildXML($path)
-    $nsmgr = GetMSBuildNamespace($path)
+    $nsmgr = GetMSBuildNamespace($proj)
     $NSQualifier = MSBuildNSQual
     $node = $proj.SelectNodes([String]::Format("//{0}:Reference", $NSQualifier), $nsmgr)
     
