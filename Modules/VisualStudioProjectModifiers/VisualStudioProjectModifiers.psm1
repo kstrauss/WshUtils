@@ -133,21 +133,31 @@ function Get-ProjectReferences{
     param(
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][Alias('PSPath')][System.IO.FileInfo]$path
         )
-    $proj = GetBuildXML($path.FullName)
-    $nsmgr = GetMSBuildNamespace($proj)
-    $NSQualifier = MSBuildNSQual
-    $node = $proj.SelectNodes([String]::Format("//{0}:ProjectReference", $NSQualifier), $nsmgr)
+	# for some reasons I don't under stand, sometimes this coeresion puts the path into the
+	# current users document directory instead of the relative path, this tries to solve that
+	if (-not $path.Exists){
+		$path = dir $path
+	}
+	if ($path.Exists){
+		$proj = GetBuildXML($path.FullName)
+		$nsmgr = GetMSBuildNamespace($proj)
+		$NSQualifier = MSBuildNSQual
+		$node = $proj.SelectNodes([String]::Format("//{0}:ProjectReference", $NSQualifier), $nsmgr)
 
-    $ourResult = New-Object PSObject
-    $ourResult | Add-Member -type NoteProperty -Value $path -Name ProjectFile 
-    $ourResult | Add-Member -type NoteProperty -Name ProjectReferences -Value @($($node |%{
-                    $x = new-object psobject
-                    $x | Add-Member -name Name -type NoteProperty -Value $_.Name
-                    $x | Add-Member -name ReferenedProjectPath -type NoteProperty -Value $_.Include
-                    $x | Add-Member -name ProjectGuid -type NoteProperty -Value $_.Project
-                    $x
-                }))
-    return $ourResult
+		$ourResult = New-Object PSObject
+		$ourResult | Add-Member -type NoteProperty -Value $path -Name ProjectFile 
+		$ourResult | Add-Member -type NoteProperty -Name ProjectReferences -Value @($($node |%{
+						$x = new-object psobject
+						$x | Add-Member -name Name -type NoteProperty -Value $_.Name
+						$x | Add-Member -name ReferenedProjectPath -type NoteProperty -Value $_.Include
+						$x | Add-Member -name ProjectGuid -type NoteProperty -Value $_.Project
+						$x
+					}))
+		return $ourResult
+	}
+	else{
+		write-error "$path does not exist"
+	}
 }
 
 function Change-ProjectReference{
@@ -324,18 +334,26 @@ dir -recurse -filter *.csproj | Get-ProjectGuids
 #>
 function Get-ProjectGuids{
 	Param(
+        
 		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
+        [Alias('PSPath')]
 		[System.IO.FileInfo[]]
-		$Files
+		$Path
 	)
-	$All = @{}
-	$Files | %{
-			$projXml = [xml](Get-Content $_.FullName)
-			$projGuid = $projXml.Project.PropertyGroup.ProjectGuid[0].Trim()
-			#$projGuid | gm
-			$All[$projGuid] = $_.FullName | Resolve-Path -Relative
-		}
-	return $All
+    begin{
+	    $All = @{}
+    }
+    process{
+	    $Path | %{
+			    $projXml = [xml](Get-Content $_.FullName)
+			    $projGuid = $projXml.Project.PropertyGroup.ProjectGuid[0].Trim()
+			    #$projGuid | gm
+			    $All[$projGuid] = $_.FullName
+		    }
+    }
+    end{
+    	return $All
+    }
 }
 
 
@@ -379,7 +397,7 @@ function Rejig-SolutionWithMovedProjects{
             $matches = ($x | ?{$_ -match $pattern} | %{$matches})
             $unknownGuid = $matches['unknownGuid']
             $projName = $matches['ProjName']
-            $path = $All[$t]
+            $path = $All[$t] | Resolve-Path -Relative
             $newString = "Project(""$unknownGuid"") = ""$projName"", ""$path"", ""$t"""
             #echo $newString
             ReplaceText-InFile -inputFile $sf -searchPatter $pattern -replaceText $newString
@@ -387,6 +405,60 @@ function Rejig-SolutionWithMovedProjects{
     }
     else{
         Write-Error "$sf does not exist"
+    }
+}
+
+<#
+.SYNOPSIS
+Updates projects and their related project references
+
+.Description
+updates a set of project files that has project references to their new
+location
+
+.EXAMPLE
+Update-ProjectReferences -ProjectFiles (dir -recurse -filter *.csproj)
+#>
+function Update-ProjectReferences{
+    [cmdletbinding(SupportsShouldProcess=$true)]
+	Param(
+		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
+		[System.IO.FileInfo[]]
+		$ProjectFiles
+		)
+    begin{
+        Write-Debug "there are $($ProjectFiles.Count) files in begin"
+        $myVar = @()
+    }
+    process{
+	    # do nothing here because we don't have all the entries from the pipeline (if any)
+        #Write-Debug "there are $($ProjectFiles.Count) files in process, will add to accumulator"
+        $myVar+=$ProjectFiles
+    }
+    end{
+        $All = $myVar | Get-ProjectGuids
+
+        Write-Debug "Got $($myVar.Count) project files "
+	    $ProjectFiles | %{
+		    $projFile = $_.FullName
+		    $projDir = $_.DirectoryName
+		    $relativePath = $_ | Resolve-Path -Relative
+		    $x = (Get-ProjectReferences $projFile).ProjectReferences
+		    # foreach reference
+		    $x | % {
+			    if ($All[$_.ProjectGuid]){
+				    pushd $projDir
+				    $r=$All[$_.ProjectGuid] | Resolve-Path -Relative
+				    popd
+				    if ($r -ne $_.ReferencedProjectPath){
+					    Write-Debug "Need to update $r"
+					    Change-ProjectReference -path $projFile -SearchProjGuid $_.ProjectGuid -NewProjGuid $_.ProjectGuid -SrcProjPath $r -Name $_.Name
+				    }
+			    }else{
+				    write-error "Did not know where project file for Guid: $($_.ProjectGuid) that used to reference $($_.ReferenedProjectPath) lives. This was in $projFile"
+			    }
+		    }
+	    }
     }
 }
 
