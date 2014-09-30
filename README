@@ -1,2 +1,3 @@
-Powershell utilities that are useful for automating chores. Will be a work in progress as things are fleshed
-out.
+Powershell utilities that are useful for automating chores. Will be a work in progress as things are fleshed out.
+
+Currently support things like changing references (including hintpaths), updating solution files when moving/renaming projects and some others.
