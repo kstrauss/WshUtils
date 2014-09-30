@@ -8,6 +8,7 @@
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$refName)
 
     $proj = [xml](Get-Content $path)
+    $srcPath = (dir $path).FullName # for writing it doesn't get the full path
     [System.Console]::WriteLine("")
     [System.Console]::WriteLine("AddReference {0} on {1}", $refName, $path)
 
@@ -33,7 +34,7 @@
         $hintPath.InnerXml = $dllRef
         $referenceNode.AppendChild($hintPath)
 
-        $proj.Save($path)
+        $proj.Save($srcPath)
     }
     #else do nothing because it's already there
 }
@@ -46,7 +47,7 @@ function Remove-Reference{
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)]$Reference)
 
     $XPath = [string]::Format("//a:Reference[@Include='{0}']", $Reference)   
-
+    $srcPath = (dir $path).FullName # for writing it doesn't get the full path
     [System.Console]::WriteLine("XPATH IS {0}", $XPath)    
     try{
     
@@ -67,7 +68,7 @@ function Remove-Reference{
         [System.Console]::WriteLine("Removing node {0}", $node)
         $node.ParentNode.RemoveChild($node);
 
-        $proj.Save($path)
+        $proj.Save($srcPath)
     }
     catch{
         "An error has occured that could not be resolved"
@@ -80,7 +81,7 @@ function Change-Reference{
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$refName)
 
     $XPath = [string]::Format("//a:Reference[@Include='{0}']", $refName)   
-
+    $srcPath = (dir $path).FullName # for writing it doesn't get the full path
     #[System.Console]::WriteLine("XPATH IS {0}", $XPath)    
     try{
     
@@ -98,7 +99,7 @@ function Change-Reference{
             }else{
                 Write-Error "Didn't find a hint child element"
             }
-            $proj.Save($path)
+            $proj.Save($srcPath)
         }else{
             Write-Error "Did not find a matching reference"
         }
@@ -128,7 +129,79 @@ function Get-References{
     return $ourResult
 }
 
+function Get-ProjectReferences{
+    param(
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][Alias('PSPath')][System.IO.FileInfo]$path
+        )
+    $proj = GetBuildXML($path.FullName)
+    $nsmgr = GetMSBuildNamespace($proj)
+    $NSQualifier = MSBuildNSQual
+    $node = $proj.SelectNodes([String]::Format("//{0}:ProjectReference", $NSQualifier), $nsmgr)
 
+    $ourResult = New-Object PSObject
+    $ourResult | Add-Member -type NoteProperty -Value $path -Name ProjectFile 
+    $ourResult | Add-Member -type NoteProperty -Name ProjectReferences -Value @($($node |%{
+                    $x = new-object psobject
+                    $x | Add-Member -name Name -type NoteProperty -Value $_.Name
+                    $x | Add-Member -name ReferenedProjectPath -type NoteProperty -Value $_.Include
+                    $x | Add-Member -name ProjectGuid -type NoteProperty -Value $_.Project
+                    $x
+                }))
+    return $ourResult
+}
+
+function Change-ProjectReference{
+    param(
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path,
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$SearchProjGuid, # this is what we search by
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$SrcProjPath,
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$NewProjGuid, 
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$Name
+        )
+
+    $XPath = [string]::Format("//a:ProjectReference[a:Project='{0}']", $SearchProjGuid)  
+     
+    try{
+        $srcPath = (dir $path).FullName # for writing it doesn't get the full path
+        $proj = [xml](Get-Content $path)
+        #[System.Console]::WriteLine("Loaded project {0} into {1}", $path, $proj)
+        $nsmgr = New-Object System.Xml.XmlNamespaceManager($proj.NameTable)
+        $nsmgr.AddNamespace('a','http://schemas.microsoft.com/developer/msbuild/2003')
+        $node = $proj.SelectSingleNode($XPath, $nsmgr)
+
+        if ($node -and $node.HasChildNodes)
+        {
+            Write-Debug "Matched xpath $xpath"
+            $x = $node.Attributes['Include'].Value
+            write-Debug "$x"
+            $node.Attributes['Include'].Value = $SrcProjPath
+            $x = $node.Attributes['Include'].Value
+            write-Debug "$x"
+            #name
+            $nameNode = $node.SelectSingleNode("a:Name",$nsmgr)
+            if ($nameNode){
+                $nameNode.InnerText = $Name
+            }else{
+                Write-Error "Didn't find a Name child element"
+            }
+            #guid
+            $projNode = $node.SelectSingleNode("a:Project",$nsmgr)
+            if ($projNode){
+                $projNode.InnerText = $NewProjGuid
+            }else{
+                Write-Error "Didn't find a Name Project element"
+            }
+            Write-Debug "Writing changes to $path"
+            $proj.Save($srcPath)
+        }else{
+            Write-Error "Did not find a matching reference"
+        }
+        
+    }
+    catch{
+        "An error has occured that could not be resolved: "+ $_
+    }
+}
 
 function Get-PostBuildEvent{
     param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path)
@@ -197,6 +270,125 @@ function Get-NoneElements{
     $node = $proj.SelectNodes($xpath, $nsmgr)
 }
 
+<#
+.SYNOPSIS
+Use SolutionDir variable for nuget references
+
+.DESCRIPTION
+Instead of using relative references for nuget references use the SolutionDir
+variable. This way if the relative path to the solution file changes then things
+should just all work
+
+.PARAMETER path
+a project file File Info
+
+.EXAMPLE
+dir -recurse -filter *.csproj | %{Update-NuGetReferencesToUseSolutionDir}
+#>
+function Update-NuGetReferencesToUseSolutionDir{
+	param(
+		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
+		[Alias('PSPath')]
+		[System.IO.FileInfo]
+		$path
+	)
+	# if a build file
+	$fullPath = $path.FullName
+    $ref = $fullPath | Get-References
+    
+	# find those that need updating
+    $needToUpdate = $ref.References | ? {$_.Hint -match "(.*)\\packages\\"}
+    
+	#update those that need to be updated
+    $needToUpdate | %{
+        $newHint = $_.Hint -replace "(.*)\\packages\\", '$(SolutionDir)\packages\'
+        Change-Reference $fullPath -dllRef $newHint -refName $_.ReferenceName
+        write-debug $_.ReferenceName, $newHint
+        }
+}
+
+<#
+.SYNOPSIS
+Get HashTable of Project Guids to project file
+
+.Description
+It's sometimes useful to be able to associate what Project Guid to a particular
+project file. Especially when you are moving things around and will need to
+reset positions. So in many ways this is a helper function.
+
+It will resolve the path to relative to where you run this file from, so run it
+from the directory that you want to have as the "root"
+
+.EXAMPLE
+dir -recurse -filter *.csproj | Get-ProjectGuids
+#>
+function Get-ProjectGuids{
+	Param(
+		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
+		[System.IO.FileInfo[]]
+		$Files
+	)
+	$All = @{}
+	$Files | %{
+			$projXml = [xml](Get-Content $_.FullName)
+			$projGuid = $projXml.Project.PropertyGroup.ProjectGuid[0].Trim()
+			#$projGuid | gm
+			$All[$projGuid] = $_.FullName | Resolve-Path -Relative
+		}
+	return $All
+}
+
+
+<#
+.SYNOPSIS
+Update a solution file that references a set of projects
+
+.Description
+Given the scenario that you have a solution file that references some number of
+project files, but the project files have changed names or location, it will reset
+the references to the new paths.
+
+Warning: if you have the solution in source control, your bindings may be out of whack.
+The best solution I know of is to delete the bindings manually (currently no cmdlet for that),
+and delete the hidden suo binary file (in same directory as the solution file). Then
+open in Visual studio and it should just "work"
+
+.EXAMPLE
+Rejig-SolutionWithMovedProjects -ProjectFiles (dir -recurse -filter *.csproj) -SolutionFile x.sln
+#>
+function Rejig-SolutionWithMovedProjects{
+	Param(
+		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
+		[System.IO.FileInfo[]]
+		$ProjectFiles,
+		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
+		[String]
+		$SolutionFile)
+    $All = $ProjectFiles | Get-ProjectGuids
+    
+    $sf = dir $SolutionFile
+    if ($sf.Exists){
+        $x = Get-Content $sf
+        $All.Keys | %{
+            # expect a line like:
+            #Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NicorReceivedConsumptIntegrationSvc", ".\Partner\Nicor\NicorReceivedConsumptIntegrationSvc\NicorReceivedConsumptIntegrationSvc.csproj", "{CA06E9CA-4FEB-414F-84D5-C3072E1CDA2A}"
+    
+            $t = $_
+            $pattern = "Project\(""(?<unknownGuid>.*)""\) = ""(?<ProjName>.*)"", ""(?<Path>.*)"", ""(?<ProjGuid>$t)"""
+            $r = $x  | Select-string $pattern
+            $matches = ($x | ?{$_ -match $pattern} | %{$matches})
+            $unknownGuid = $matches['unknownGuid']
+            $projName = $matches['ProjName']
+            $path = $All[$t]
+            $newString = "Project(""$unknownGuid"") = ""$projName"", ""$path"", ""$t"""
+            #echo $newString
+            ReplaceText-InFile -inputFile $sf -searchPatter $pattern -replaceText $newString
+        }
+    }
+    else{
+        Write-Error "$sf does not exist"
+    }
+}
 
 # private Functions (i.e. not exported)
 function GetBuildXML{
@@ -218,3 +410,25 @@ function GetMSBuildNamespace{
     return ,$nsmgr
 }
 
+Function ReplaceText-InFile
+{
+    Param(
+    [parameter(Mandatory=$true,ValueFromPipeline=$true)]
+    [System.IO.FileInfo] $inputFile,
+    [Parameter(Mandatory=$true)]
+    [String] $searchPattern,
+    [Parameter(Mandatory=$true)]
+    [String] $replaceText
+    )
+    Begin{}
+    Process{
+       $x=gc $inputFile.FullName;
+       $y=$x -replace $searchPattern, $replaceText;
+       #only replace those that there actually were changes
+       if (Compare-Object $x $y)
+       {
+        $y | Out-File -Encoding UTF8 -FilePath $inputFile.FullName
+       }
+     }
+     End{}
+}
