@@ -1,4 +1,13 @@
-﻿function Add-Reference{
+﻿<#
+.Synopsis
+Adds a dll as a reference to a project file
+
+.Example add-DllReference mycsproj.csproj MyNewDll.dll myNewDll
+
+.Notes
+Potentially you might want to add a project reference instead of a DLL or assembly
+#>
+function Add-DllReference{
     # Calling convension:
     #   AddReference.PS1 "Mycsproj.csproj", 
     #                    "MyNewDllToReference.dll", 
