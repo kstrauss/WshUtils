@@ -169,6 +169,63 @@ function Get-ProjectReferences{
 	}
 }
 
+function Add-ProjectReference{
+<#
+.SYNOPSIS
+Adds a project reference to an existing project
+
+.DESCRIPTION
+Adds a project reference to an existing project
+
+.path Full path to the project file you are modifying to add this new project reference to
+.referencedProjPath Full Path to the project file that is being referenced
+.Relative A switch that says whether to use the full path or a relative path to the referencedProjPath
+
+.EXAMPLE
+Basic usage
+Add-ProjectReference -csProjPath c:\projA\projA.csproj -referencedProjPath c:\projb\projb.csproj
+#>
+
+    param(
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path,
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$referencedProjPath,
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$IncludeStr
+    )
+        $refProjPath = (Resolve-Path $referencedProjPath).Path
+        $srcProjXml = [xml](gc $referencedProjPath)
+        $projGuid = (Get-ProjectGuids -Path $refProjPath).keys[0]
+        $XPath = "//a:ProjectReference"
+
+        $srcPath = (dir $path).FullName # for writing it doesn't get the full path
+        $proj = [xml](Get-Content $path)
+        $nsmgr = New-Object System.Xml.XmlNamespaceManager($proj.NameTable)
+        $ns = 'http://schemas.microsoft.com/developer/msbuild/2003'
+        $nsmgr.AddNamespace('a',$ns)
+
+        $parentNode = $proj.SelectNodes($XPath, $nsmgr)[0].ParentNode
+        $newNode = $proj.CreateElement("ProjectReference", $ns)
+        $newNode.SetAttribute("Include",  $IncludeStr)
+
+        $projGuidElem = $proj.CreateElement("Project", $ns)
+        $projGuidElem.InnerText=$projGuid
+        $newNode.AppendChild($projGuidElem)
+
+        $projName = $proj.CreateElement("Name",$ns)
+        $projName.InnerText = $(dir $refProjPath).BaseName
+        $newNode.AppendChild($projName)
+        if ($parentNode.Count -eq 0){
+            # there was no ItemGroup with project references so we make one
+            $itemGroup = $proj.CreateElement("ItemGroup",$ns)
+            $itemGroup.AppendChild($newNode)
+            $proj.AppendChild( $itemGroup)
+        }
+        else{
+            $parentNode.AppendChild($newNode)
+        }
+        
+        $proj.Save($srcPath)     
+}
+
 function Change-ProjectReference{
     param(
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path,
