@@ -1,5 +1,5 @@
 $destDir = "~\Documents\WindowsPowerShell\Modules\VisualStudioProjectModifiers"
-$filesToCopy = @("VisualStudioProjectModifiers.psm1","VisualStudioModifier.psd1")
+$filesToCopy = @("VisualStudioProjectModifiers.psm1","VisualStudioProjectModifiers.psd1")
 $filesToCopy | %{
 	copy $_ $destDir
 }

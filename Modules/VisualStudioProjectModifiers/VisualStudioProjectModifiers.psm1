@@ -1,5 +1,26 @@
 ﻿<#
 .Synopsis
+private Helper function to denote that it should exported as part of the module
+#>
+function export
+{
+  param ([parameter(mandatory=$true)] [validateset("function","variable")] $type,
+  [parameter(mandatory=$true)] $name,
+  [parameter(mandatory=$true)] $value)
+  if ($type -eq "function")
+   {
+     Set-item "function:script:$name" $value
+     Export-ModuleMember $name
+   }
+else
+   {
+     Set-Variable -scope Script $name $value
+     Export-ModuleMember -variable $name
+   }
+}
+
+<#
+.Synopsis
 Adds a dll as a reference to a project file
 
 .Example add-DllReference mycsproj.csproj MyNewDll.dll myNewDll
@@ -7,7 +28,7 @@ Adds a dll as a reference to a project file
 .Notes
 Potentially you might want to add a project reference instead of a DLL or assembly
 #>
-function Add-DllReference{
+export function Add-DllReference{
     # Calling convension:
     #   AddReference.PS1 "Mycsproj.csproj", 
     #                    "MyNewDllToReference.dll", 
@@ -48,7 +69,7 @@ function Add-DllReference{
     #else do nothing because it's already there
 }
 
-function Remove-Reference{
+export function Remove-Reference{
     # Calling Convention
     #   RemoveReference.ps1 "MyCsProj.csproj" 
     #   "..\SomeDirectory\SomeProjectReferenceToRemove.dll"
@@ -84,7 +105,7 @@ function Remove-Reference{
     }
 }
 
-function Change-Reference{
+export function Edit-Reference{
     param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$path,
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$dllRef, 
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$refName)
@@ -119,7 +140,7 @@ function Change-Reference{
     }
 }
 
-function Get-References{
+export function Get-References{
     param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path)
 
     $proj = GetBuildXML($path)
@@ -138,7 +159,7 @@ function Get-References{
     return $ourResult
 }
 
-function Get-ProjectReferences{
+export function Get-ProjectReference{
     param(
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][Alias('PSPath')][System.IO.FileInfo]$path
         )
@@ -169,7 +190,7 @@ function Get-ProjectReferences{
 	}
 }
 
-function Add-ProjectReference{
+export function Add-ProjectReference{
 <#
 .SYNOPSIS
 Adds a project reference to an existing project
@@ -193,7 +214,7 @@ Add-ProjectReference -csProjPath c:\projA\projA.csproj -referencedProjPath c:\pr
     )
         $refProjPath = (Resolve-Path $referencedProjPath).Path
         $srcProjXml = [xml](gc $referencedProjPath)
-        $projGuid = (Get-ProjectGuids -Path $refProjPath).keys[0]
+        $projGuid = (Get-ProjectGuid -Path $refProjPath).keys[0]
         $XPath = "//a:ProjectReference"
 
         $srcPath = (dir $path).FullName # for writing it doesn't get the full path
@@ -226,7 +247,7 @@ Add-ProjectReference -csProjPath c:\projA\projA.csproj -referencedProjPath c:\pr
         $proj.Save($srcPath)     
 }
 
-function Change-ProjectReference{
+export function Change-ProjectReference{
     param(
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path,
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$SearchProjGuid, # this is what we search by
@@ -279,7 +300,7 @@ function Change-ProjectReference{
     }
 }
 
-function Get-PostBuildEvent{
+export function Get-PostBuildEvent{
     param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path)
 
     $proj = GetBuildXML($path)
@@ -297,7 +318,7 @@ function Get-PostBuildEvent{
     }
 }
 
-function Set-PostBuildEvent{
+export function Set-PostBuildEvent{
     param([Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path,
     [Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$postBuildText)
 
@@ -361,7 +382,7 @@ a project file File Info
 .EXAMPLE
 dir -recurse -filter *.csproj | %{Update-NuGetReferencesToUseSolutionDir}
 #>
-function Update-NuGetReferencesToUseSolutionDir{
+export function Update-NuGetReferencesToUseSolutionDir{
 	param(
 		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
 		[Alias('PSPath')]
@@ -373,12 +394,12 @@ function Update-NuGetReferencesToUseSolutionDir{
     $ref = $fullPath | Get-References
     
 	# find those that need updating
-    $needToUpdate = $ref.References | ? {$_.Hint -match "(.*)\\packages\\"}
+    $needToUpdate = $ref.References | Where-Object {$_.Hint -match "(.*)\\packages\\"}
     
 	#update those that need to be updated
-    $needToUpdate | %{
+    $needToUpdate | ForEach-Object {
         $newHint = $_.Hint -replace "(.*)\\packages\\", '$(SolutionDir)\packages\'
-        Change-Reference $fullPath -dllRef $newHint -refName $_.ReferenceName
+        Edit-Reference $fullPath -dllRef $newHint -refName $_.ReferenceName
         write-debug $_.ReferenceName, $newHint
         }
 }
@@ -396,9 +417,9 @@ It will resolve the path to relative to where you run this file from, so run it
 from the directory that you want to have as the "root"
 
 .EXAMPLE
-dir -recurse -filter *.csproj | Get-ProjectGuids
+dir -recurse -filter *.csproj | Get-ProjectGuid
 #>
-function Get-ProjectGuids{
+export function Get-ProjectGuid{
 	Param(
         
 		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
@@ -410,7 +431,7 @@ function Get-ProjectGuids{
 	    $All = @{}
     }
     process{
-	    $Path | %{
+	    $Path | ForEach-Object {
 			    $projXml = [xml](Get-Content $_.FullName)
 			    $projGuid = $projXml.Project.PropertyGroup.ProjectGuid[0].Trim()
 			    #$projGuid | gm
@@ -440,7 +461,7 @@ open in Visual studio and it should just "work"
 .EXAMPLE
 Rejig-SolutionWithMovedProjects -ProjectFiles (dir -recurse -filter *.csproj) -SolutionFile x.sln
 #>
-function Rejig-SolutionWithMovedProjects{
+export function Rejig-SolutionWithMovedProjects{
 	Param(
 		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
 		[System.IO.FileInfo[]]
@@ -448,7 +469,7 @@ function Rejig-SolutionWithMovedProjects{
 		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
 		[String]
 		$SolutionFile)
-    $All = $ProjectFiles | Get-ProjectGuids
+    $All = $ProjectFiles | Get-ProjectGuid
     
     $sf = dir $SolutionFile
     if ($sf.Exists){
@@ -483,9 +504,9 @@ updates a set of project files that has project references to their new
 location
 
 .EXAMPLE
-Update-ProjectReferences -ProjectFiles (dir -recurse -filter *.csproj)
+Edit-ProjectReference -ProjectFiles (dir -recurse -filter *.csproj)
 #>
-function Update-ProjectReferences{
+export function Edit-ProjectReference{
     [cmdletbinding(SupportsShouldProcess=$true)]
 	Param(
 		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
@@ -502,16 +523,16 @@ function Update-ProjectReferences{
         $myVar+=$ProjectFiles
     }
     end{
-        $All = $myVar | Get-ProjectGuids
+        $All = $myVar | Get-ProjectGuid
 
         Write-Debug "Got $($myVar.Count) project files "
-	    $ProjectFiles | %{
+	    $ProjectFiles | ForEach-Object {
 		    $projFile = $_.FullName
 		    $projDir = $_.DirectoryName
 		    $relativePath = $_ | Resolve-Path -Relative
-		    $x = (Get-ProjectReferences $projFile).ProjectReferences
+		    $x = (Get-ProjectReference $projFile).ProjectReferences
 		    # foreach reference
-		    $x | % {
+		    $x | ForEach-Object {
 			    if ($All[$_.ProjectGuid]){
 				    pushd $projDir
 				    $r=$All[$_.ProjectGuid] | Resolve-Path -Relative
