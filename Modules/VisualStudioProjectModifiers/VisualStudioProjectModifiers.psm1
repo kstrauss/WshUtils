@@ -39,8 +39,7 @@ export function Add-DllReference{
 
     $proj = [xml](Get-Content $path)
     $srcPath = (dir $path).FullName # for writing it doesn't get the full path
-    [System.Console]::WriteLine("")
-    [System.Console]::WriteLine("AddReference {0} on {1}", $refName, $path)
+    Write-verbose ( "AddReference {0} on {1}" -f $refName, $path)
 
     # Create the following hierarchy
     #  <Reference Include='{0}'>
@@ -78,25 +77,23 @@ export function Remove-Reference{
 
     $XPath = [string]::Format("//a:Reference[@Include='{0}']", $Reference)   
     $srcPath = (dir $path).FullName # for writing it doesn't get the full path
-    [System.Console]::WriteLine("XPATH IS {0}", $XPath)    
+    Write-Verbose "XPATH IS $XPath"    
     try{
     
         $proj = [xml](Get-Content $path)
-        [System.Console]::WriteLine("Loaded project {0} into {1}", $path, $proj)
+        Write-Verbose "Loaded project $path into $proj"
         $nsmgr = New-Object System.Xml.XmlNamespaceManager($proj.NameTable)
         $nsmgr.AddNamespace('a','http://schemas.microsoft.com/developer/msbuild/2003')
         $node = $proj.SelectSingleNode($XPath, $nsmgr)
 
         if (!$node)
         { 
-            [System.Console]::WriteLine("");
-            [System.Console]::WriteLine("Cannot find node with XPath {0}", $XPath) 
-            [System.Console]::WriteLine("");
+            Write-Error "Cannot find node with XPath $XPath"
+            return 
             #exit
         }
-
-        [System.Console]::WriteLine("Removing node {0}", $node)
-        $node.ParentNode.RemoveChild($node);
+        Write-Verbose "Removing node $node"
+        $node.ParentNode.RemoveChild($node)
 
         $proj.Save($srcPath)
     }
@@ -150,7 +147,7 @@ export function Get-References{
     
     $ourResult = New-Object PSObject
     $ourResult | Add-Member -type NoteProperty -Value $path -Name ProjectFile 
-    $ourResult | Add-Member -type NoteProperty -Name References -Value @($($node |%{
+    $ourResult | Add-Member -type NoteProperty -Name References -Value @($($node | foreach-object{
                     $x = new-object psobject
                     $x | Add-Member -name ReferenceName -type NoteProperty -Value $_.Include
                     $x | Add-Member -name Hint -type NoteProperty -Value $_.HintPath
@@ -176,7 +173,7 @@ export function Get-ProjectReference{
 
 		$ourResult = New-Object PSObject
 		$ourResult | Add-Member -type NoteProperty -Value $path -Name ProjectFile 
-		$ourResult | Add-Member -type NoteProperty -Name ProjectReferences -Value @($($node |%{
+		$ourResult | Add-Member -type NoteProperty -Name ProjectReferences -Value @($($node | foreach-object{
 						$x = new-object psobject
 						$x | Add-Member -name Name -type NoteProperty -Value $_.Name
 						$x | Add-Member -name ReferenedProjectPath -type NoteProperty -Value $_.Include
@@ -212,6 +209,12 @@ Add-ProjectReference -csProjPath c:\projA\projA.csproj -referencedProjPath c:\pr
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$referencedProjPath,
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$IncludeStr
     )
+        $resolvedRefProjPath = (resolve-path $referencedProjPath).Path
+        $potential = Get-ProjectReference $resolvedRefProjPath
+        if ($potential ){
+            write-error "This one already exists in the project, change the project"
+            return
+			}
         $refProjPath = (Resolve-Path $referencedProjPath).Path
         $srcProjXml = [xml](gc $referencedProjPath)
         $projGuid = (Get-ProjectGuid -Path $refProjPath).keys[0]
@@ -367,21 +370,7 @@ function Get-NoneElements{
     $node = $proj.SelectNodes($xpath, $nsmgr)
 }
 
-<#
-.SYNOPSIS
-Use SolutionDir variable for nuget references
 
-.DESCRIPTION
-Instead of using relative references for nuget references use the SolutionDir
-variable. This way if the relative path to the solution file changes then things
-should just all work
-
-.PARAMETER path
-a project file File Info
-
-.EXAMPLE
-dir -recurse -filter *.csproj | %{Update-NuGetReferencesToUseSolutionDir}
-#>
 export function Update-NuGetReferencesToUseSolutionDir{
 	param(
 		[Parameter(Mandatory=$true,ValueFromPipeline=$true)]
@@ -389,6 +378,7 @@ export function Update-NuGetReferencesToUseSolutionDir{
 		[System.IO.FileInfo]
 		$path
 	)
+
 	# if a build file
 	$fullPath = $path.FullName
     $ref = $fullPath | Get-References
@@ -400,8 +390,25 @@ export function Update-NuGetReferencesToUseSolutionDir{
     $needToUpdate | ForEach-Object {
         $newHint = $_.Hint -replace "(.*)\\packages\\", '$(SolutionDir)\packages\'
         Edit-Reference $fullPath -dllRef $newHint -refName $_.ReferenceName
-        write-debug $_.ReferenceName, $newHint
+        write-debug "ReferenceName: $($_.ReferenceName)"
+		write-debug "NewHint: $newHint"
         }
+
+	<#
+	.SYNOPSIS
+	Use SolutionDir variable for nuget references
+
+	.DESCRIPTION
+	Instead of using relative references for nuget references use the SolutionDir
+	variable. This way if the relative path to the solution file changes then things
+	should just all work
+
+	.PARAMETER path
+	a project file File Info
+
+	.EXAMPLE
+	dir -recurse -filter *.csproj | %{Update-NuGetReferencesToUseSolutionDir $_}
+	#>
 }
 
 <#
