@@ -207,17 +207,17 @@ Add-ProjectReference -csProjPath c:\projA\projA.csproj -referencedProjPath c:\pr
     param(
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][string]$path,
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$referencedProjPath,
-        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$IncludeStr
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][String]$IncludeStr # path that can be relative in the project file
     )
-        $resolvedRefProjPath = (resolve-path $referencedProjPath).Path
-        $potential = Get-ProjectReference $resolvedRefProjPath
+        $refProjPath = (Resolve-Path $referencedProjPath).Path
+        $projGuid = (Get-ProjectGuid -Path $refProjPath).keys[0]
+        $potential = Get-ProjectReference $path | select-object -ExpandProperty ProjectReferences | where-object {$_.ProjectGuid -eq $projGuid } 
         if ($potential ){
             write-error "This one already exists in the project, change the project"
             return
 			}
-        $refProjPath = (Resolve-Path $referencedProjPath).Path
+        
         $srcProjXml = [xml](gc $referencedProjPath)
-        $projGuid = (Get-ProjectGuid -Path $refProjPath).keys[0]
         $XPath = "//a:ProjectReference"
 
         $srcPath = (dir $path).FullName # for writing it doesn't get the full path
@@ -241,7 +241,7 @@ Add-ProjectReference -csProjPath c:\projA\projA.csproj -referencedProjPath c:\pr
             # there was no ItemGroup with project references so we make one
             $itemGroup = $proj.CreateElement("ItemGroup",$ns)
             $itemGroup.AppendChild($newNode)
-            $proj.AppendChild( $itemGroup)
+            $proj.DocumentElement.AppendChild( $itemGroup)
         }
         else{
             $parentNode.AppendChild($newNode)
