@@ -556,6 +556,48 @@ export function Edit-ProjectReference{
     }
 }
 
+<#
+.SYNOPSIS
+Updates a set of FileInfos to whatever framework version
+
+.EXAMPLE
+dir -recurse -filter *.csproj | Set-FrameworkVersion -version "4.61"
+#>
+
+export function Set-FrameworkVersion{
+        [CmdletBinding()]
+        param(
+            [Parameter(Mandatory=$true,ValueFromPipeline=$true)]
+		    [System.IO.FileInfo[]]
+		    $ProjectFiles,
+            [Parameter(Mandatory=$true)]
+            [String]
+            $version
+        )
+        
+        begin {
+            Write-Debug "there are $($ProjectFiles.Count) files in begin"
+            $myVar = @()
+        }
+        
+        process {
+            $myVar+=$ProjectFiles
+        }
+        
+        end {
+            $myVar | ForEach-Object {
+                $doc = New-Object System.Xml.XmlDocument
+                $doc.Load($_.FullName);
+                $nsmgr = GetMSBuildNamespace ( $doc)
+                $targetFrameworkNodes = $doc.SelectNodes("//x:TargetFrameworkVersion",$nsmgr)
+                foreach ($node in $targetFrameworkNodes) {
+                    $node.InnerText = $version
+                }
+                $doc.Save($_.FullName)
+            }
+        }
+}
+
 # private Functions (i.e. not exported)
 function GetBuildXML{
     param([Parameter(Mandatory=$true)][string]$path)
